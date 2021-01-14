@@ -1,0 +1,24 @@
+{
+    "cSpell.words": [
+        "APIGW",
+        "AWSSDK",
+        "Behavior",
+        "Brotli",
+        "Keepalive",
+        "Mfas",
+        "Noncurrent",
+        "Predeployment",
+        "Tiering",
+        "Undeployment",
+        "cloudfronts",
+        "genrsa",
+        "jwks",
+        "localstack",
+        "openid",
+        "pendinglogin",
+        "postlogin",
+        "prelogin",
+        "pubout",
+        "slsw"
+    ]
+}

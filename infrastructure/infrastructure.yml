@@ -1,0 +1,449 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  ParamBucketName:
+    Type: String
+  ParamCognitoUserPoolName:
+    Type: String
+  ParamCognitoDomainName:
+    Type: String
+  ParamInviteMessageSubject:
+    Type: String
+    Default: 'Your temporary password'
+  ParamInviteMessageBody:
+    Type: String
+    Default: 'Your username is {username} and temporary password is {####}.'
+  ParamVerificationMessageSubject:
+    Type: String
+    Default: 'Your verification code'
+  ParamVerificationMessageBody:
+    Type: String
+    Default: 'Your verification code is {####}.'
+  ParamDomainName:
+    Type: String
+    Default: 'localhost'
+  ParamEncodedPublicKey:
+    Type: String
+
+Resources:
+
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256 # AES256 | aws:kms
+      BucketName: !Sub '${ParamBucketName}-website'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: 'Granting least privilege read access to cloudfront user'
+            Effect: 'Allow'
+            Action:
+              - 's3:GetObject'
+            Resource: !Sub '${WebsiteBucket.Arn}/*'
+            Principal:
+              AWS: !Sub 'arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${OriginAccess}'
+
+  LoggingBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: BucketOwnerFullControl
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256 # AES256 | aws:kms
+      BucketName: !Sub '${ParamBucketName}-logs'
+      LifecycleConfiguration:
+        Rules:
+          - AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+            ExpirationInDays: 14
+            Id: 'DeleteLogsAfter14Days'
+            NoncurrentVersionExpirationInDays: 14
+            Status: Enabled # Enabled | Disabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  LoggingBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LoggingBucket
+      PolicyDocument:
+        Statement:
+          - Sid: 'Granting least privilege read access to cloudfront user'
+            Effect: 'Allow'
+            Action:
+              - 's3:*BucketAcl*'
+              - 's3:*Object*'
+            Resource:
+              - !Sub '${LoggingBucket.Arn}/*'
+              - !GetAtt LoggingBucket.Arn
+            Principal:
+              Service: [cloudfront.amazonaws.com]
+
+  OriginAccess:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: 'OriginAccessIdentity'
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        CacheBehaviors:
+          - ForwardedValues: # '/prelogin'
+              QueryString: true
+              Cookies:
+                Forward: all
+            PathPattern: '/prelogin'
+            TargetOriginId: 'lambdas'
+            ViewerProtocolPolicy: 'redirect-to-https'
+          - ForwardedValues: # '/pendinglogin'
+              QueryString: true
+              Cookies:
+                Forward: all
+            PathPattern: '/pendinglogin'
+            TargetOriginId: 'lambdas'
+            ViewerProtocolPolicy: 'redirect-to-https'
+          - ForwardedValues: # '/postlogin'
+              QueryString: true
+              Cookies:
+                Forward: all
+            PathPattern: '/postlogin'
+            TargetOriginId: 'lambdas'
+            ViewerProtocolPolicy: 'redirect-to-https'
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: '/prelogin'
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: all
+          TargetOriginId: 'website-bucket'
+          TrustedKeyGroups:
+            - !Ref DistributionKeyGroup
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: 'index.html'
+        Enabled: true
+        HttpVersion: http1.1
+        IPV6Enabled: true
+        Logging:
+          Bucket: !GetAtt LoggingBucket.DomainName
+          IncludeCookies: true
+          Prefix: cloudfront-logs
+        Origins:
+          - ConnectionAttempts: 1
+            DomainName: !GetAtt WebsiteBucket.RegionalDomainName
+            Id: 'website-bucket'
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${OriginAccess}'
+          - ConnectionAttempts: 1
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginKeepaliveTimeout: 5 # seconds, default value is 5, range 1-60
+              OriginProtocolPolicy: https-only # http-only | https-only | match-viewer
+              OriginReadTimeout: 30 # seconds, default value is 30, range is 1-60
+              OriginSSLProtocols: [TLSv1.2]
+            DomainName: '{{resolve:ssm:/@@NAME_KEBAB_CASE@@/api-gateway/domain:1}}'
+            Id: 'lambdas'
+            OriginPath: '/dev'
+        PriceClass: PriceClass_All
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+          MinimumProtocolVersion: TLSv1.2_2019
+
+  DistributionKeyGroup:
+    Type: AWS::CloudFront::KeyGroup
+    Properties:
+      KeyGroupConfig:
+        Comment: !Sub "KeyGroup for the '${ParamDomainName} distribution"
+        Items:
+          - !Ref DistributionPublicKey
+        Name: !Sub '${ParamDomainName}-key-group'
+
+  DistributionPublicKey:
+    Type: AWS::CloudFront::PublicKey
+    Properties:
+      PublicKeyConfig:
+        CallerReference: !Ref ParamDomainName
+        Comment: !Sub "PublicKey for the '${ParamDomainName}' distribution"
+        EncodedKey: !Ref ParamEncodedPublicKey
+        Name: !Sub '${ParamDomainName}-public-key'
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email # admin_only | verified_email | verified_phone_number
+            Priority: 1
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+        InviteMessageTemplate:
+          EmailSubject: !Ref ParamInviteMessageSubject
+          EmailMessage: !Ref ParamInviteMessageBody
+      AutoVerifiedAttributes:
+        - email # email and/or phone_number
+      DeviceConfiguration:
+        ChallengeRequiredOnNewDevice: true
+        DeviceOnlyRememberedOnUserPrompt: true
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT # COGNITO_DEFAULT | DEVELOPER
+      EmailVerificationMessage: !Ref ParamVerificationMessageBody
+      EmailVerificationSubject: !Ref ParamVerificationMessageSubject
+      MfaConfiguration: 'OFF' # OFF | ON | OPTIONAL
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 1
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          DeveloperOnlyAttribute: false
+          Mutable: true
+          Required: true
+          StringAttributeConstraints:
+            MinLength: '0'
+            MaxLength: '2048'
+        - Name: given_name
+          AttributeDataType: String
+          DeveloperOnlyAttribute: false
+          Mutable: true
+          Required: true
+          StringAttributeConstraints:
+            MinLength: '0'
+            MaxLength: '2048'
+      UsernameAttributes:
+        - email # phone_number and/or email
+      UsernameConfiguration:
+        CaseSensitive: false
+      UserPoolAddOns:
+        AdvancedSecurityMode: 'OFF' # AUDIT | ENFORCED | OFF
+      UserPoolName: !Ref ParamCognitoUserPoolName
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE # CONFIRM_WITH_CODE | CONFIRM_WITH_LINK
+        EmailMessage: !Ref ParamVerificationMessageBody
+        EmailSubject: !Ref ParamVerificationMessageSubject
+
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref ParamCognitoDomainName
+      UserPoolId: !Ref CognitoUserPool
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      AccessTokenValidity: 12 # 12 hours
+      AllowedOAuthFlows:
+        - implicit # implicit | code | client_credentials
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - profile # OAuth: phone, email, openid, and profile
+        - email
+        - openid
+      CallbackURLs:
+        - !Sub 'https://${Distribution.DomainName}/pendinglogin'
+        - !Sub 'https://${Distribution.DomainName}/logout'
+      ClientName: !Ref ParamCognitoUserPoolName
+      DefaultRedirectURI: !Sub 'https://${Distribution.DomainName}/pendinglogin'
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH # ALLOW_ADMIN_USER_PASSWORD_AUTH | ALLOW_CUSTOM_AUTH | ALLOW_USER_PASSWORD_AUTH | ALLOW_USER_SRP_AUTH | ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      GenerateSecret: false
+      IdTokenValidity: 12 # 12 hours
+      LogoutURLs:
+        - !Sub 'https://${Distribution.DomainName}/logout'
+      PreventUserExistenceErrors: ENABLED # ENABLED | LEGACY
+      RefreshTokenValidity: 1 # 1 day
+      SupportedIdentityProviders:
+        - COGNITO # COGNITO, Facebook, Google and LoginWithAmazon.
+      UserPoolId: !Ref CognitoUserPool
+
+  EnvironmentIdpRedirectionUrl:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/@@NAME_KEBAB_CASE@@/cognito/post-login-url'
+      Tier: Standard # Advanced | Intelligent-Tiering | Standard
+      Type: String # String | StringList
+      Value: !Sub 'https://${CognitoUserPoolDomain}.auth.@@AWS_REGION@@.amazoncognito.com/login?client_id=${CognitoUserPoolClient}&response_type=token&scope=email+openid&redirect_uri=https://${Distribution.DomainName}/pendinglogin'
+
+  EnvironmentPrivateKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub "PrivateKey for the Trusted Signer for domain '${ParamDomainName}'"
+      Name: '/@@NAME_KEBAB_CASE@@/cloudfront/private-key'
+      SecretString: 'TODO - this needs to be set :)'
+
+  EnvironmentKeyPairId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/@@NAME_KEBAB_CASE@@/cloudfront/key-pair-id'
+      Tier: Standard
+      Type: String
+      Value: !Ref DistributionPublicKey
+
+  EnvironmentCognitoUserPoolId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/@@NAME_KEBAB_CASE@@/cognito/user-pool-id'
+      Tier: Standard
+      Type: String
+      Value: !Ref CognitoUserPool
+
+  EnvironmentCognitoUserPoolRegion:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/@@NAME_KEBAB_CASE@@/cognito/user-pool-region'
+      Tier: Standard
+      Type: String
+      Value: !Ref AWS::Region
+
+  EnvironmentCognitoUserPoolDomain:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/@@NAME_KEBAB_CASE@@/cognito/user-pool-domain'
+      Tier: Standard
+      Type: String
+      Value: !Ref CognitoUserPoolDomain
+
+  EnvironmentCognitoUserPoolClient:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/@@NAME_KEBAB_CASE@@/cognito/user-pool-client'
+      Tier: Standard
+      Type: String
+      Value: !Ref CognitoUserPoolClient
+
+  EnvironmentCognitoRedirectDomain:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/@@NAME_KEBAB_CASE@@/cognito/redirect-domain'
+      Tier: Standard
+      Type: String
+      Value: !GetAtt Distribution.DomainName
+
+Outputs:
+  WebsiteBucketName:
+    Value: !Ref WebsiteBucket
+  WebsiteBucketArn:
+    Value: !GetAtt WebsiteBucket.Arn
+  WebsiteBucketDomainName:
+    Value: !GetAtt WebsiteBucket.DomainName
+  WebsiteBucketDualStackDomainName:
+    Value: !GetAtt WebsiteBucket.DualStackDomainName
+  WebsiteBucketRegionalDomainName:
+    Value: !GetAtt WebsiteBucket.RegionalDomainName
+  WebsiteBucketWebsiteURL:
+    Value: !GetAtt WebsiteBucket.WebsiteURL
+  LoggingBucketName:
+    Value: !Ref LoggingBucket
+  LoggingBucketArn:
+    Value: !GetAtt LoggingBucket.Arn
+  LoggingBucketDomainName:
+    Value: !GetAtt LoggingBucket.DomainName
+  LoggingBucketDualStackDomainName:
+    Value: !GetAtt LoggingBucket.DualStackDomainName
+  LoggingBucketRegionalDomainName:
+    Value: !GetAtt LoggingBucket.RegionalDomainName
+  LoggingBucketWebsiteURL:
+    Value: !GetAtt LoggingBucket.WebsiteURL
+  DistributionId:
+    Value: !Ref Distribution
+  DistributionDomainName:
+    Value: !GetAtt Distribution.DomainName
+  DistributionUrl:
+    Value: !Sub 'https://${Distribution.DomainName}'
+  DistributionKeyGroupId:
+    Value: !Ref DistributionKeyGroup
+  DistributionKeyGroupLastModifiedTime:
+    Value: !GetAtt DistributionKeyGroup.LastModifiedTime
+  DistributionPublicKeyId:
+    Value: !Ref DistributionPublicKey
+  DistributionPublicKeyCreatedTime:
+    Value: !GetAtt DistributionPublicKey.CreatedTime
+  CognitoUserPoolId:
+    Value: !Ref CognitoUserPool
+  CognitoUserPoolArn:
+    Value: !GetAtt CognitoUserPool.Arn
+  CognitoUserPoolProviderName:
+    Value: !GetAtt CognitoUserPool.ProviderName
+  CognitoUserPoolProviderURL:
+    Value: !GetAtt CognitoUserPool.ProviderURL
+  CognitoUserPoolClientId:
+    Value: !Ref CognitoUserPoolClient
+  CognitoUserPoolDomainId:
+    Value: !Ref CognitoUserPoolDomain
+  EnvironmentIdpRedirectionUrlId:
+    Value: !Ref EnvironmentIdpRedirectionUrl
+  EnvironmentIdpRedirectionUrlType:
+    Value: !GetAtt EnvironmentIdpRedirectionUrl.Type
+  EnvironmentIdpRedirectionUrlValue:
+    Value: !GetAtt EnvironmentIdpRedirectionUrl.Value
+  EnvironmentPrivateKeyArn:
+    Value: !Ref EnvironmentPrivateKey
+  EnvironmentKeyPairIdId:
+    Value: !Ref EnvironmentKeyPairId
+  EnvironmentKeyPairIdType:
+    Value: !GetAtt EnvironmentKeyPairId.Type
+  EnvironmentKeyPairIdValue:
+    Value: !GetAtt EnvironmentKeyPairId.Value
+  EnvironmentCognitoUserPoolIdId:
+    Value: !Ref EnvironmentCognitoUserPoolId
+  EnvironmentCognitoUserPoolIdType:
+    Value: !GetAtt EnvironmentCognitoUserPoolId.Type
+  EnvironmentCognitoUserPoolIdValue:
+    Value: !GetAtt EnvironmentCognitoUserPoolId.Value
+  EnvironmentCognitoUserPoolRegionId:
+    Value: !Ref EnvironmentCognitoUserPoolRegion
+  EnvironmentCognitoUserPoolRegionType:
+    Value: !GetAtt EnvironmentCognitoUserPoolRegion.Type
+  EnvironmentCognitoUserPoolRegionValue:
+    Value: !GetAtt EnvironmentCognitoUserPoolRegion.Value
+  EnvironmentCognitoUserPoolDomainId:
+    Value: !Ref EnvironmentCognitoUserPoolDomain
+  EnvironmentCognitoUserPoolDomainType:
+    Value: !GetAtt EnvironmentCognitoUserPoolDomain.Type
+  EnvironmentCognitoUserPoolDomainValue:
+    Value: !GetAtt EnvironmentCognitoUserPoolDomain.Value
+  EnvironmentCognitoUserPoolClientId:
+    Value: !Ref EnvironmentCognitoUserPoolClient
+  EnvironmentCognitoUserPoolClientType:
+    Value: !GetAtt EnvironmentCognitoUserPoolClient.Type
+  EnvironmentCognitoUserPoolClientValue:
+    Value: !GetAtt EnvironmentCognitoUserPoolClient.Value
+  EnvironmentCognitoRedirectDomainId:
+    Value: !Ref EnvironmentCognitoRedirectDomain
+  EnvironmentCognitoRedirectDomainType:
+    Value: !GetAtt EnvironmentCognitoRedirectDomain.Type
+  EnvironmentCognitoRedirectDomainValue:
+    Value: !GetAtt EnvironmentCognitoRedirectDomain.Value

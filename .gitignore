@@ -1,0 +1,12 @@
+# Files
+*.pem
+junit.xml
+test-report.html
+
+# Folders
+.scratch
+.serverless/
+.webpack/
+jspm_packages/
+node_modules/
+lambdas/coverage/
