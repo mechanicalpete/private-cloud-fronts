@@ -2,7 +2,7 @@
 
 ## What is this
 
-**Private (Cloud) Fronts** demonstrates a method for restricting access to CloudFront distributions by requiring visitors to first authenticate against AWS Cognito. This repository contains the source code for the accompanying blog posts (which cover this topic in more detail):
+**Private (Cloud) Fronts** demonstrates a method for restricting access to CloudFront distributions by requiring visitors to first authenticate against AWS Cognito. This repository contains the source code for the accompanying [blog post (which covers this topic in more detail)](https://www.surrealsoftware.com.au/posts/2021-04-15.html):
 
 ![Architecture Diagram](documentation/images/architecture.png)
 
