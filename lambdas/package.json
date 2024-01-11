@@ -23,7 +23,7 @@
     "@types/aws-lambda": "^8.10.108",
     "@types/jest": "^29.2.2",
     "@types/node": "^18.11.9",
-    "@types/serverless": "^3.12.8",
+    "@types/serverless": "^3.12.20",
     "aws-sdk-mock": "^5.8.0",
     "fork-ts-checker-webpack-plugin": "^7.2.13",
     "jest": "^29.3.1",
