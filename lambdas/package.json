@@ -24,7 +24,7 @@
     "@types/jest": "^29.2.2",
     "@types/node": "^20.11.6",
     "@types/serverless": "^3.12.8",
-    "aws-sdk-mock": "^5.9.0",
+    "aws-sdk-mock": "^6.0.4",
     "fork-ts-checker-webpack-plugin": "^9.0.2",
     "jest": "^29.3.1",
     "jest-html-reporter": "^3.10.2",
