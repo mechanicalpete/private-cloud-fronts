@@ -9,7 +9,7 @@
     "watch": "jest --reporters=default --reporters=jest-junit --coverage --watchAll --silent"
   },
   "dependencies": {
-    "aws-sdk": "^2.1677.0",
+    "aws-sdk": "^2.1679.0",
     "aws-xray-sdk": "^3.3.8",
     "aws-xray-sdk-core": "^3.9.0",
     "axios": "^1.7.4",
