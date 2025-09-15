@@ -12,7 +12,7 @@
     "aws-sdk": "^2.1692.0",
     "aws-xray-sdk": "^3.10.1",
     "aws-xray-sdk-core": "^3.10.2",
-    "axios": "^1.11.0",
+    "axios": "^1.12.1",
     "jsonwebtoken": "^9.0.2",
     "jwk-to-pem": "^2.0.7",
     "source-map-support": "^0.5.21",
